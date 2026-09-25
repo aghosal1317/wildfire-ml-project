@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Pandoc: Markdown to PDF (LaTeX)",
+      "type": "shell",
+      "command": "pandoc",
+      "args": [
+        "\"${file}\"",
+        "-o",
+        "\"${fileDirname}/${fileBasenameNoExtension}.pdf\"",
+        "--pdf-engine=pdflatex",
+        "-V",
+        "geometry:margin=1in"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}
