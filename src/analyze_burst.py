@@ -2,7 +2,8 @@
 Burst / awareness-onset detection for the wildfire alert-failure project.
 
 Mirrors collect_data.py's naming convention and looks in one folder
-(--data-dir, default: current directory) for:
+(--data-dir, default: the project's data/ folder, i.e. ../data relative to
+this script) for:
 
     <case>_gdelt.csv
     <case>_reddit_submissions.csv
@@ -14,11 +15,9 @@ finds -- same auto-discovery as wildfire_analysis.ipynb, so a file missing
 (e.g. camp_fire_gdelt.csv) is reported and skipped rather than erroring out.
 Writes a "<name>_burst.csv" next to each source CSV.
 
-If your CSVs sit in a different folder than where you run this script from
-(e.g. the scripts live in data/ but the CSVs landed one level up), pass
---data-dir explicitly:
+If your CSVs sit somewhere other than data/, pass --data-dir explicitly:
 
-    python analyze_burst.py --data-dir ..
+    python analyze_burst.py --data-dir path/to/csvs
 
 Setup:
     pip install pandas
@@ -37,6 +36,9 @@ import os
 import pandas as pd
 
 CASES = ["lahaina", "camp_fire"]
+
+# CSVs live in <project root>/data, next to this script's src/ folder.
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 
 # label -> (filename suffix, timestamp column name)
 SOURCE_SUFFIXES = {
@@ -108,8 +110,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--data-dir", default=".",
-                         help="folder containing the CSVs (default: current directory)")
+    parser.add_argument("--data-dir", default=DATA_DIR,
+                         help="folder containing the CSVs (default: the project's data/ folder)")
     parser.add_argument("--case", choices=CASES + ["all"], default="all")
     parser.add_argument("--freq", default="h", help="pandas offset alias: h, 30min, D, etc.")
     parser.add_argument("--baseline-window", type=int, default=6,
