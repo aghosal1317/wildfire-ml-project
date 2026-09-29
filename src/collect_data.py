@@ -80,15 +80,19 @@ PULLPUSH_MAX_PAGES = 500  # safety cap, not expected to be hit in normal use
 HEADERS = {"User-Agent": "wildfire-evac-research/0.5 (student research project)"}
 
 
-def _get(url, params, max_retries=5, base_wait=10):
+def _get(url, params, max_retries=5, base_wait=10, max_wait=60):
     """GET with the request URL and HTTP status printed, and automatic
     retry-with-backoff on 429 (rate limited) or 5xx (server error)
-    responses. GDELT's public endpoint in particular rate-limits harder in
-    practice than its documented 1-req/5s, so a 429 isn't a real failure --
-    it's a sign to back off and try again. Backoff doubles each attempt
-    (10s, 20s, 40s, 80s, 160s by default); if the last attempt is still
-    rate limited, it raises and lets the caller's try/except handle it so
-    one bad chunk doesn't take down the whole run."""
+    responses. GDELT's public API runs at "archive scale" with very little
+    headroom and rate-limits based on overall system load, not anything
+    specific to one caller -- a 429 there can happen even when nothing
+    about this script is wrong, especially around high-traffic news
+    events. Backoff doubles each attempt up to `max_wait`, then holds
+    there (10s, 20s, 40s, 60s, 60s... by default) so a stretch of
+    congestion gets ridden out instead of escalating to absurd waits. If
+    the last attempt is still failing, it raises and lets the caller's
+    try/except handle it so one bad chunk doesn't take down the whole run.
+    """
     wait = base_wait
     resp = None
     for attempt in range(1, max_retries + 1):
@@ -101,7 +105,7 @@ def _get(url, params, max_retries=5, base_wait=10):
             print(f"    rate limited / server error -- retrying in {wait}s "
                   f"(attempt {attempt}/{max_retries})")
             time.sleep(wait)
-            wait *= 2
+            wait = min(wait * 2, max_wait)
             continue
         resp.raise_for_status()
         return resp
@@ -109,7 +113,7 @@ def _get(url, params, max_retries=5, base_wait=10):
     return resp
 
 
-def fetch_gdelt_range(query, start_date, end_date, chunk_hours=4, max_records=GDELT_MAX_RECORDS,
+def fetch_gdelt_range(query, start_date, end_date, chunk_hours=8, max_records=GDELT_MAX_RECORDS,
                        chunk_sleep=10):
     """News articles from GDELT DOC 2.0, fetched in fixed time chunks across
     the whole [start_date, end_date] window instead of one query for the
@@ -118,6 +122,11 @@ def fetch_gdelt_range(query, start_date, end_date, chunk_hours=4, max_records=GD
     multi-day window would silently return only the tail end of it, missing
     the ignition/warning period. Chunking keeps each query's result well
     under the cap so the full range comes back complete.
+
+    chunk_hours defaults to 8 (not smaller) deliberately: GDELT's public API
+    rate-limits on overall load, so fewer, larger requests mean less
+    exposure to that congestion. If a chunk warns it hit the max_records
+    cap, lower --gdelt-chunk-hours for that case specifically.
     """
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)  # end_date inclusive
@@ -140,7 +149,7 @@ def fetch_gdelt_range(query, start_date, end_date, chunk_hours=4, max_records=GD
             "maxrecords": max_records,
             "sort": "dateasc",
         }
-        resp = _get(GDELT_URL, params)
+        resp = _get(GDELT_URL, params, max_retries=8, base_wait=10, max_wait=60)
         articles = resp.json().get("articles", [])
         if len(articles) >= max_records:
             print(f"    ! chunk {chunk_start}-{chunk_end} returned the {max_records}-record "

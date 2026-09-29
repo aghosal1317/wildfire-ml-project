@@ -1,12 +1,6 @@
-# \hfill Journal Report 15
+# Journal Report 1
 
-## \hfill Ricardo Montelban
-\vspace{-0.5em}
-\hfill October 6, 2026
-
-\vspace{1em}
-\hrule
-\vspace{0.5em}
+## Aneesh Ghosal
 
 **Research Topic:** State in 1-3 sentences the overall goal of your research project. This should rarely change, but it can when you find you need to modify your scope.
 
