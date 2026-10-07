@@ -26,13 +26,10 @@ This daily log summarizes your research for the previous week Sunday to Sunday.
 ### Tuesday September 29
 
 Today I worked on getting the GDELT project data collection running reliably. The API was giving HTTP 429 (rate limit) errors on pretty much every request. GDELT docs said this was for all users to prevent congestion, not a fixed quota. I added logic to try the API, then wait a few seconds (retry with backoff logic), capped how long the retries go for, and reduced the total number of requests by increasing timings between requests. This fix is kind of working, some requests that failed before are recovering after a few tries, but the total run is taking a while because of how much data there is and waiting between requests. I will let it run, and next class will be able to start analyzing the data.
-### Friday October 3
 
-Today I wrote an Chrome Extension that reminds me to meditate. Details..
+### Thursday October 1
 
-### Saturday October 4
-
-If you work outside of school time, include it in your journal as well. In general, absence from school does not excuse you from research that day -- I expect you'll make it up a different day that week if possible.
+Today I reran the data collection and made a new GitHub repository for my work while waiting. I included the important things, like data collection scripts, the new CSVs, and an initial jupyter notebook. I also noticed that the LaTex to PDF wasn't working well, so I reinstalled the packages, including one that accounts for fullpage.sty. The Reddit collection now works past the 100 row limit. GDELT still did not finish for Lahaina nor camp fire, so I need to retry next time (I think I shut my computer too soon). PullPush is limited on some subreddits like r/Hawaii and r/California, but next time I will rerun these subreddits.
 
 ## Timeline
 
@@ -42,23 +39,21 @@ If you work outside of school time, include it in your journal as well. In gener
 \hline
 \textbf{Date} & \textbf{Goal} & \textbf{Met?} \\
 \hline
-Today minus 2 weeks & Reminder of your previous goal & Did you meet the goal? (i.e. Done or Not Done) \\
+Today minus 2 weeks & Find websites with social media data I could use & Done \\
 \hline
-Today minus 1 week &  & Maybe say if you modified it, etc. \\
+Today minus 1 week & Pull social media data & Not fully done \\
 \hline
-This week & State your goal to be completed at this time & T \\
+This week & Pull social media data & Partially done, some errors in data and I want to pull more eventually \\
 \hline
-Today plus 1 week &  & blank \\
+Today plus 1 week & Fix errors with GDELT running, pull california/hawaii data &  \\
 \hline
-Today plus 2 weeks &  & blank \\
+Today plus 2 weeks & Analyze data and make initial report of what went wrong & blank \\
 \hline
 \end{longtable}
 
 ## Reflection
 
-A detailed person accounting of how this week went, how your project is going, description of successes and failures. If you
-need(ed) to change goals, or refocus your project, explain it here. If you have specific questions or needs, you can list them here.
-This is a good place to include photos, diagrams, screenshots, code, etc. if it's especially relevant.
+Right now I am still trying to just pull all the data I need to make an initial conclusion of what went wrong in some of these wildfires. It takes a while to run the scripts that pull the data, so while I wait, I will look into more research articles that may be relevant to my project. I also might need to look into where I can get more data, since each source, other than GDELT, is giving me ~200 entries.
 
 ---
 geometry: margin=0.5in, letterpaper
