@@ -1,15 +1,39 @@
 """
 Data collection for the wildfire evacuation alert-failure project.
 
-Pulls two free, keyless data sources for both case studies (Lahaina 2023,
+Pulls free, keyless data sources for both case studies (Lahaina 2023,
 Camp Fire 2018) and saves each as a CSV:
 
-  1. GDELT DOC 2.0 API   - news article volume/tone (free, covers 2017-present)
-  2. PullPush            - Reddit posts/comments (free, mirrors old Pushshift)
-     - site-wide keyword search -> *_reddit_submissions.csv / *_reddit_comments.csv
-     - subreddit-scoped, no keyword -> *_<subreddit>_reddit_local.csv
-       (everything posted in that subreddit in the date window -- the local-
-       signal proxy that Arctic Shift used to provide)
+  1. GDELT                - news article volume/tone (free, covers 2017-present)
+  2. PullPush             - Reddit, site-wide keyword search (mirrors old Pushshift)
+     -> *_reddit_submissions.csv / *_reddit_comments.csv
+  3. Arctic Shift         - Reddit, subreddit-scoped, no keyword
+     -> *_<subreddit>_reddit_local.csv           (posts)
+     -> *_<subreddit>_reddit_local_comments.csv  (comments)
+     (everything posted in that subreddit in the date window -- the local-
+     signal proxy)
+
+Since 2026-10-08 PullPush sits behind a Cloudflare bot challenge (every
+request gets HTTP 403 with `cf-mitigated: challenge`), so its site-wide
+searches fail until that's lifted; the CSVs already collected are kept.
+Arctic Shift, which earlier failed at the TLS handshake on this network, is
+reachable again and now handles the subreddit-scoped data. It can't do
+site-wide keyword search (it requires a subreddit or author), which is why
+PullPush is still used for that.
+
+GDELT is fetched from its raw 15-minute GKG bulk files by default
+(--gdelt-source bulk), not the DOC API. The DOC API's rate limiter is far
+stricter than its "one request every 5 seconds" message suggests: after a
+429 it stays closed for a minute or more and keeps rejecting retries, so a
+24-chunk run spends most of its time throttled. The bulk files are static
+downloads from data.gdeltproject.org (Google Cloud Storage) with no rate
+limit. Each one (~7-9 MB zipped) lists every article GDELT processed in
+that 15 minutes with its URL, title, source, locations, names and tone; the
+script streams each file, keeps the rows matching the case's terms, and
+discards the rest. It's more downloading (~3-4 GB per case, never stored on
+disk) but it's complete (no 250-record cap) and finishes in one go. Progress
+is checkpointed, so an interrupted run resumes where it stopped.
+--gdelt-source api keeps the original DOC API path.
 
 Both sources cap how much a single request can return (GDELT: 250 records
 per query, sorted most-recent-first, no offset pagination; PullPush: caps
@@ -39,14 +63,22 @@ Usage:
     python collect_data.py --case lahaina
     python collect_data.py --case camp_fire
     python collect_data.py --case all          # default
-    python collect_data.py --out-dir ../data   # write CSVs to a different folder than cwd
+    python collect_data.py --out-dir some/dir  # write CSVs somewhere other than data/
     python collect_data.py --gdelt-chunk-hours 2   # if a chunk warns it hit the cap
+    python collect_data.py --gdelt-only --gdelt-sleep 30   # retry just GDELT
+    python collect_data.py --local-only        # just the subreddit data (Arctic Shift)
 """
 
 import argparse
+import html
+import io
 import os
+import re
+import sys
 import time
 import traceback
+import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -56,6 +88,9 @@ CASES = {
     "lahaina": {
         "gdelt_query": '"Lahaina" fire',
         "reddit_query": "Lahaina fire",
+        # GKG bulk matching: an article is kept if every term appears somewhere
+        # in its URL, title, locations, names or themes (case-insensitive).
+        "gdelt_bulk_terms": ["lahaina", "fire"],
         "subreddits": ["Hawaii", "Maui"],
         "start": "2023-08-08",
         "end": "2023-08-11",
@@ -63,6 +98,7 @@ CASES = {
     "camp_fire": {
         "gdelt_query": '"Camp Fire" Paradise California',
         "reddit_query": "Paradise Camp Fire California",
+        "gdelt_bulk_terms": ["camp fire", "paradise"],
         "subreddits": ["California", "Chico"],
         "start": "2018-11-08",
         "end": "2018-11-12",
@@ -72,10 +108,24 @@ CASES = {
 GDELT_URL = "https://api.gdeltproject.org/api/v2/doc/doc"
 GDELT_MAX_RECORDS = 250
 
+GDELT_GKG_URL = "https://data.gdeltproject.org/gdeltv2/{stamp}.gkg.csv.zip"
+GDELT_GKG_WORKERS = 8  # parallel downloads; it's static file hosting, not the rate-limited API
+
 PULLPUSH_SUBMISSION_URL = "https://api.pullpush.io/reddit/search/submission/"
 PULLPUSH_COMMENT_URL = "https://api.pullpush.io/reddit/search/comment/"
+
+ARCTIC_SHIFT_URL = "https://arctic-shift.photon-reddit.com/api/{kind}/search"  # kind: posts | comments
+ARCTIC_SHIFT_PAGE_SIZE = 100
+ARCTIC_SHIFT_PAGE_SLEEP = 3  # seconds between pages; it throttles bursts
 PULLPUSH_PAGE_SIZE = 100
 PULLPUSH_MAX_PAGES = 500  # safety cap, not expected to be hit in normal use
+
+# CSVs live in <project root>/data, next to this script's src/ folder.
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
+
+# Every source/chunk that failed this run, so the script can exit non-zero and
+# the overnight runner (run_collection.sh) knows another pass is worthwhile.
+FAILURES = []
 
 HEADERS = {"User-Agent": "wildfire-evac-research/0.5 (student research project)"}
 
@@ -114,7 +164,7 @@ def _get(url, params, max_retries=5, base_wait=10, max_wait=60):
 
 
 def fetch_gdelt_range(query, start_date, end_date, chunk_hours=8, max_records=GDELT_MAX_RECORDS,
-                       chunk_sleep=10):
+                       chunk_sleep=10, save_path=None):
     """News articles from GDELT DOC 2.0, fetched in fixed time chunks across
     the whole [start_date, end_date] window instead of one query for the
     whole range. GDELT has no offset-based pagination and caps each query
@@ -127,11 +177,18 @@ def fetch_gdelt_range(query, start_date, end_date, chunk_hours=8, max_records=GD
     rate-limits on overall load, so fewer, larger requests mean less
     exposure to that congestion. If a chunk warns it hit the max_records
     cap, lower --gdelt-chunk-hours for that case specifically.
+
+    If save_path is given, each chunk is appended to that CSV as soon as it
+    arrives, so progress survives a crash or Ctrl-C. A chunk that still fails
+    after all retries is skipped (and listed at the end) rather than throwing
+    away every chunk already fetched -- rerun later to fill the gaps; rows
+    already saved are deduplicated by URL.
     """
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)  # end_date inclusive
 
     all_articles = []
+    failed_chunks = []
     chunk_start = start_dt
     first_request = True
     while chunk_start < end_dt:
@@ -149,15 +206,148 @@ def fetch_gdelt_range(query, start_date, end_date, chunk_hours=8, max_records=GD
             "maxrecords": max_records,
             "sort": "dateasc",
         }
-        resp = _get(GDELT_URL, params, max_retries=8, base_wait=10, max_wait=60)
-        articles = resp.json().get("articles", [])
+        try:
+            resp = _get(GDELT_URL, params, max_retries=8, base_wait=10, max_wait=60)
+            articles = resp.json().get("articles", [])
+        except Exception as e:
+            print(f"    ! chunk {chunk_start}-{chunk_end} failed after retries ({e}) -- skipping")
+            failed_chunks.append((chunk_start, chunk_end))
+            chunk_start = chunk_end
+            continue
         if len(articles) >= max_records:
             print(f"    ! chunk {chunk_start}-{chunk_end} returned the {max_records}-record "
                   f"cap -- likely still truncated; rerun with a smaller --gdelt-chunk-hours")
+        if save_path and articles:
+            save_or_append(pd.DataFrame(articles), save_path, dedup_col="url", label="GDELT chunk")
         all_articles.extend(articles)
         chunk_start = chunk_end
 
+    if failed_chunks:
+        FAILURES.append(f"GDELT API: {len(failed_chunks)} chunk(s)")
+        print(f"    ! {len(failed_chunks)} GDELT chunk(s) never got through -- rerun with "
+              f"--gdelt-only (and maybe a higher --gdelt-sleep) to fill them in:")
+        for a, b in failed_chunks:
+            print(f"        {a} to {b}")
     return pd.DataFrame(all_articles)
+
+
+# GKG 2.1 column positions (tab-separated, no header)
+_GKG_DATE, _GKG_COLLECTION, _GKG_SOURCE, _GKG_URL = 1, 2, 3, 4
+_GKG_THEMES, _GKG_LOCATIONS, _GKG_TONE, _GKG_NAMES, _GKG_TRANSLATION, _GKG_EXTRAS = 8, 10, 15, 23, 25, 26
+_PAGE_TITLE_RE = re.compile(r"<PAGE_TITLE>(.*?)</PAGE_TITLE>", re.S)
+
+
+def _normalize(text):
+    """Lowercase and turn URL punctuation into spaces, so 'camp-fire' in a
+    URL matches the term 'camp fire'."""
+    return re.sub(r"[-_/+.]+", " ", text.lower())
+
+
+def _fetch_gkg_slot(stamp, terms):
+    """Download one 15-minute GKG file and return (status, matching rows).
+    status is "ok", "missing" (GDELT has a gap here; permanent), or
+    "error" (network trouble; worth retrying on a later run)."""
+    url = GDELT_GKG_URL.format(stamp=stamp)
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=120)
+            if resp.status_code == 404:
+                return "missing", []
+            resp.raise_for_status()
+            break
+        except Exception:
+            if attempt == 2:
+                return "error", []
+            time.sleep(5 * (attempt + 1))
+
+    rows = []
+    with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+        raw = zf.read(zf.namelist()[0]).decode("utf-8", errors="replace")
+    for line in raw.splitlines():
+        f = line.split("\t")
+        if len(f) <= _GKG_EXTRAS or f[_GKG_COLLECTION] != "1":  # 1 = web articles
+            continue
+        title_match = _PAGE_TITLE_RE.search(f[_GKG_EXTRAS])
+        title = html.unescape(title_match.group(1)).strip() if title_match else ""
+        haystack = _normalize(" ".join([f[_GKG_URL], title, f[_GKG_LOCATIONS],
+                                        f[_GKG_NAMES], f[_GKG_THEMES]]))
+        if not all(term in haystack for term in terms):
+            continue
+        d = f[_GKG_DATE]
+        translation = f[_GKG_TRANSLATION]
+        rows.append({
+            "url": f[_GKG_URL],
+            "title": title,
+            "seendate": f"{d[:8]}T{d[8:14]}Z",  # same format as the DOC API's seendate
+            "domain": f[_GKG_SOURCE],
+            "language": translation.split(";")[0].replace("srclc:", "") if translation else "English",
+            "tone": f[_GKG_TONE].split(",")[0],
+        })
+    return "ok", rows
+
+
+def fetch_gdelt_bulk(terms, start_date, end_date, save_path, workers=GDELT_GKG_WORKERS):
+    """Every GDELT-monitored web article in [start_date, end_date] (UTC,
+    end inclusive) whose metadata matches all of `terms`, read from the raw
+    15-minute GKG files instead of the rate-limited DOC API.
+
+    Matches are appended to save_path as each batch finishes, and the slots
+    already processed are listed in a checkpoint file next to it
+    (.<name>.gkg_done), so rerunning after an interruption only downloads
+    what's left. Delete the checkpoint to force a full re-scan (e.g. after
+    changing the terms).
+    """
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+    stamps = []
+    t = start_dt
+    while t < end_dt:
+        stamps.append(t.strftime("%Y%m%d%H%M%S"))
+        t += timedelta(minutes=15)
+
+    done_path = os.path.join(os.path.dirname(save_path),
+                             "." + os.path.basename(save_path).replace(".csv", ".gkg_done"))
+    done = set()
+    if os.path.exists(done_path):
+        with open(done_path) as fh:
+            done = {line.strip() for line in fh if line.strip()}
+    todo = [s for s in stamps if s not in done]
+    print(f"    {len(stamps)} fifteen-minute files in range, {len(stamps) - len(todo)} already "
+          f"done, {len(todo)} to download (terms: {terms})")
+
+    total_matches, missing, errors = 0, [], []
+    batch, batch_stamps = [], []
+    with ThreadPoolExecutor(max_workers=workers) as pool, open(done_path, "a") as done_fh:
+        futures = {pool.submit(_fetch_gkg_slot, s, terms): s for s in todo}
+        for i, fut in enumerate(as_completed(futures), 1):
+            stamp = futures[fut]
+            status, rows = fut.result()
+            if status == "error":
+                errors.append(stamp)
+            else:
+                if status == "missing":
+                    missing.append(stamp)
+                batch.extend(rows)
+                batch_stamps.append(stamp)
+                total_matches += len(rows)
+            # flush every 24 files (~6 hours of news) so progress survives an interruption
+            if len(batch_stamps) >= 24 or i == len(todo):
+                if batch:
+                    save_or_append(pd.DataFrame(batch), save_path, dedup_col="url",
+                                   label=f"GDELT bulk [{i}/{len(todo)} files]")
+                else:
+                    print(f"    GDELT bulk [{i}/{len(todo)} files]: no new matches in this batch")
+                done_fh.write("".join(s + "\n" for s in batch_stamps))
+                done_fh.flush()
+                batch, batch_stamps = [], []
+
+    print(f"    GDELT bulk: {total_matches} matching articles this run")
+    if missing:
+        print(f"    ({len(missing)} slot(s) don't exist on GDELT's side -- normal, small gaps)")
+    if errors:
+        FAILURES.append(f"GDELT bulk: {len(errors)} file(s)")
+        print(f"    ! {len(errors)} file(s) failed to download -- rerun with --gdelt-only "
+              f"to retry just those")
 
 
 def _paginate_pullpush(url, base_params, page_size=PULLPUSH_PAGE_SIZE, max_pages=PULLPUSH_MAX_PAGES):
@@ -208,14 +398,83 @@ def fetch_pullpush(query, start_date, end_date, kind="submission", page_size=PUL
     return _paginate_pullpush(url, base_params, page_size=page_size)
 
 
-def fetch_pullpush_subreddit(subreddit, start_date, end_date, page_size=PULLPUSH_PAGE_SIZE):
-    """All submissions from one specific subreddit in the date range (no
-    keyword), paginated across the full range -- the local-signal proxy,
-    via PullPush's `subreddit` filter instead of Arctic Shift."""
+def _get_arctic_shift(url, params, max_retries=8):
+    """GET for Arctic Shift. When it's overloaded it answers HTTP 422 with
+    {"error": "Timeout. Maybe slow down a bit"} rather than a 429, so that
+    (plus 429/5xx, timeouts and dropped connections) is retried, waiting for its X-RateLimit-Reset header when
+    sent, else backing off 10s, 20s, 40s... capped at 120s."""
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.get(url, params=params, headers=HEADERS, timeout=60)
+        except (requests.Timeout, requests.ConnectionError) as e:
+            # also what a request in flight looks like after the Mac slept
+            if attempt == max_retries:
+                raise
+            wait = min(10 * 2 ** attempt, 120)
+            print(f"    network error ({type(e).__name__}) -- retrying in {wait}s "
+                  f"(attempt {attempt + 1}/{max_retries})")
+            time.sleep(wait)
+            continue
+        print(f"    GET {resp.url}")
+        print(f"    -> HTTP {resp.status_code}")
+        throttled = (resp.status_code == 422 and "slow down" in resp.text.lower()) \
+            or resp.status_code == 429 or resp.status_code >= 500
+        if not throttled:
+            break
+        if attempt == max_retries:
+            break
+        reset = resp.headers.get("X-RateLimit-Reset", "")
+        wait = min(max(int(reset) if reset.isdigit() else 0, 10 * 2 ** attempt), 120)
+        print(f"    throttled ({resp.text[:60].strip()}) -- retrying in {wait}s "
+              f"(attempt {attempt + 1}/{max_retries})")
+        time.sleep(wait)
+    resp.raise_for_status()
+    return resp
+
+
+def fetch_arctic_shift_subreddit(subreddit, start_date, end_date, kind="posts",
+                                 page_size=ARCTIC_SHIFT_PAGE_SIZE, max_pages=PULLPUSH_MAX_PAGES):
+    """All posts or comments from one subreddit in the date range (no
+    keyword) via Arctic Shift -- the local-signal proxy. Same date-window
+    convention as the PullPush fetchers so the files line up. Pages forward
+    using the last row's created_utc as the next `after`, deduplicating by
+    id, until a short page, a page with nothing new, or `before` is reached.
+    If a page still fails after retries, the rows fetched so far are returned
+    (and the failure recorded) rather than thrown away; rerunning fills the
+    rest, deduplicated by id.
+    """
+    url = ARCTIC_SHIFT_URL.format(kind=kind)
     after = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
     before = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp())
-    base_params = {"subreddit": subreddit, "after": after, "before": before, "sort": "asc"}
-    return _paginate_pullpush(PULLPUSH_SUBMISSION_URL, base_params, page_size=page_size)
+
+    all_rows, seen_ids = [], set()
+    for page in range(max_pages):
+        params = {"subreddit": subreddit, "after": after, "before": before,
+                  "limit": page_size, "sort": "asc"}
+        try:
+            body = _get_arctic_shift(url, params).json()
+            if body.get("error"):
+                raise RuntimeError(f"Arctic Shift error: {body['error']}")
+        except Exception as e:
+            FAILURES.append(f"r/{subreddit} {kind} (partial: {len(all_rows)} rows kept)")
+            print(f"    ! r/{subreddit} {kind} stopped early ({e}); keeping {len(all_rows)} rows")
+            break
+        rows = body.get("data") or []
+        new_rows = [r for r in rows if r.get("id") not in seen_ids]
+        if not new_rows:
+            break
+        seen_ids.update(r.get("id") for r in new_rows)
+        all_rows.extend(new_rows)
+
+        last_ts = max(int(r["created_utc"]) for r in rows)
+        if len(rows) < page_size or last_ts >= before:
+            break
+        after = last_ts
+        time.sleep(ARCTIC_SHIFT_PAGE_SLEEP)
+    else:
+        print(f"    ! hit the {max_pages}-page safety cap -- results may still be truncated")
+
+    return pd.DataFrame(all_rows)
 
 
 def save_or_append(new_df, path, dedup_col=None, label=""):
@@ -242,21 +501,52 @@ def save_or_append(new_df, path, dedup_col=None, label=""):
           f"{len(combined)} total rows now in {path} (file written: {written})")
 
 
-def collect_case(case_name, out_dir=".", gdelt_chunk_hours=4, gdelt_sleep=10):
+def collect_local(case_name, out):
+    """Subreddit-scoped posts and comments for every subreddit in the case."""
     case = CASES[case_name]
+    for sub in case["subreddits"]:
+        for kind, suffix in [("posts", "reddit_local"), ("comments", "reddit_local_comments")]:
+            print(f"  r/{sub} {kind} (subreddit-scoped, Arctic Shift)...")
+            try:
+                local_df = fetch_arctic_shift_subreddit(sub, case["start"], case["end"], kind)
+                save_or_append(local_df, out(f"{case_name}_{sub}_{suffix}.csv"), dedup_col="id",
+                                label=f"r/{sub} local {kind}")
+            except Exception:
+                FAILURES.append(f"{case_name} r/{sub} {kind}")
+                print(f"    ! r/{sub} local {kind} failed:")
+                print(traceback.format_exc())
+
+
+def collect_case(case_name, out_dir=DATA_DIR, gdelt_chunk_hours=4, gdelt_sleep=10,
+                 gdelt_only=False, gdelt_source="bulk", local_only=False):
+    case = CASES[case_name]
+    os.makedirs(out_dir, exist_ok=True)
     print(f"\n=== Collecting: {case_name} ({case['start']} to {case['end']}) ===")
 
     def out(filename):
         return os.path.join(out_dir, filename)
 
-    print("  GDELT news coverage...")
+    if local_only:
+        collect_local(case_name, out)
+        return
+
+    print(f"  GDELT news coverage ({gdelt_source})...")
     try:
-        gdelt_df = fetch_gdelt_range(case["gdelt_query"], case["start"], case["end"],
-                                      chunk_hours=gdelt_chunk_hours, chunk_sleep=gdelt_sleep)
-        save_or_append(gdelt_df, out(f"{case_name}_gdelt.csv"), dedup_col="url", label="GDELT")
+        if gdelt_source == "bulk":
+            fetch_gdelt_bulk(case["gdelt_bulk_terms"], case["start"], case["end"],
+                             save_path=out(f"{case_name}_gdelt.csv"))
+        else:
+            gdelt_df = fetch_gdelt_range(case["gdelt_query"], case["start"], case["end"],
+                                          chunk_hours=gdelt_chunk_hours, chunk_sleep=gdelt_sleep,
+                                          save_path=out(f"{case_name}_gdelt.csv"))
+            print(f"    GDELT: fetched {len(gdelt_df)} articles this run")
     except Exception:
+        FAILURES.append(f"{case_name} GDELT")
         print("    ! GDELT failed:")
         print(traceback.format_exc())
+
+    if gdelt_only:
+        return
 
     print("  Reddit submissions (site-wide, PullPush)...")
     try:
@@ -264,6 +554,7 @@ def collect_case(case_name, out_dir=".", gdelt_chunk_hours=4, gdelt_sleep=10):
         save_or_append(sub_df, out(f"{case_name}_reddit_submissions.csv"), dedup_col="id",
                         label="PullPush submissions")
     except Exception:
+        FAILURES.append(f"{case_name} reddit submissions")
         print("    ! PullPush submissions failed:")
         print(traceback.format_exc())
 
@@ -273,39 +564,45 @@ def collect_case(case_name, out_dir=".", gdelt_chunk_hours=4, gdelt_sleep=10):
         save_or_append(com_df, out(f"{case_name}_reddit_comments.csv"), dedup_col="id",
                         label="PullPush comments")
     except Exception:
+        FAILURES.append(f"{case_name} reddit comments")
         print("    ! PullPush comments failed:")
         print(traceback.format_exc())
 
-    for sub in case["subreddits"]:
-        print(f"  r/{sub} (subreddit-scoped, PullPush)...")
-        try:
-            local_df = fetch_pullpush_subreddit(sub, case["start"], case["end"])
-            save_or_append(local_df, out(f"{case_name}_{sub}_reddit_local.csv"), dedup_col="id",
-                            label=f"r/{sub} local")
-        except Exception:
-            print(f"    ! r/{sub} local failed:")
-            print(traceback.format_exc())
+    collect_local(case_name, out)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--case", choices=list(CASES) + ["all"], default="all")
-    parser.add_argument("--out-dir", default=".",
-                         help="folder to write CSVs into (default: current directory). "
-                              "E.g. --out-dir ../data if running from a src/ folder.")
+    parser.add_argument("--out-dir", default=DATA_DIR,
+                         help="folder to write CSVs into (default: the project's data/ folder, "
+                              "no matter where you run this from)")
     parser.add_argument("--gdelt-chunk-hours", type=float, default=4,
                          help="size of each GDELT time chunk in hours (default: 4). "
                               "Lower this if a chunk warns that it hit the 250-record cap.")
     parser.add_argument("--gdelt-sleep", type=float, default=10,
                          help="seconds to wait between GDELT chunk requests (default: 10). "
                               "Raise this if you're seeing repeated 429 rate-limit retries.")
+    parser.add_argument("--gdelt-source", choices=["bulk", "api"], default="bulk",
+                         help="bulk (default): scan GDELT's raw 15-minute GKG files -- no rate "
+                              "limit, complete. api: the rate-limited DOC 2.0 API.")
+    parser.add_argument("--local-only", action="store_true",
+                         help="only fetch the subreddit-scoped data (Arctic Shift)")
+    parser.add_argument("--gdelt-only", action="store_true",
+                         help="only fetch GDELT, skip Reddit (handy for re-running failed chunks)")
     args = parser.parse_args()
 
     for name in (list(CASES) if args.case == "all" else [args.case]):
         collect_case(name, out_dir=args.out_dir, gdelt_chunk_hours=args.gdelt_chunk_hours,
-                     gdelt_sleep=args.gdelt_sleep)
+                     gdelt_sleep=args.gdelt_sleep, gdelt_only=args.gdelt_only,
+                     gdelt_source=args.gdelt_source, local_only=args.local_only)
 
     print("\nDone. Each CSV has a timestamp column you can feed into analyze_burst.py:")
     print("  GDELT      -> 'seendate'")
     print("  Reddit (all sources) -> 'created_utc'")
+
+    if FAILURES:
+        print(f"\nRUN INCOMPLETE -- {len(FAILURES)} failure(s): {'; '.join(FAILURES)}")
+        sys.exit(1)
+    print("\nRUN COMPLETE -- every source succeeded.")

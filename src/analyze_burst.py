@@ -9,6 +9,7 @@ this script) for:
     <case>_reddit_submissions.csv
     <case>_reddit_comments.csv
     <case>_<subreddit>_reddit_local.csv
+    <case>_<subreddit>_reddit_local_comments.csv
 
 for case in {lahaina, camp_fire}, and runs burst detection on every file it
 finds -- same auto-discovery as wildfire_analysis.ipynb, so a file missing
@@ -58,6 +59,9 @@ def find_case_files(case, data_dir):
     for path in sorted(glob.glob(os.path.join(data_dir, f"{case}_*_reddit_local.csv"))):
         sub = os.path.basename(path).replace(f"{case}_", "").replace("_reddit_local.csv", "")
         found[f"local_{sub}"] = (path, "created_utc")
+    for path in sorted(glob.glob(os.path.join(data_dir, f"{case}_*_reddit_local_comments.csv"))):
+        sub = os.path.basename(path).replace(f"{case}_", "").replace("_reddit_local_comments.csv", "")
+        found[f"local_comments_{sub}"] = (path, "created_utc")
     return found
 
 
