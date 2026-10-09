@@ -60,7 +60,7 @@ Today plus 2 weeks &  & blank \\
 A detailed person accounting of how this week went, how your project is going, description of successes and failures. If you
 need(ed) to change goals, or refocus your project, explain it here. If you have specific questions or needs, you can list them here.
 This is a good place to include photos, diagrams, screenshots, code, etc. if it's especially relevant.
-
+![alt text](<../data/Screenshot 2026-10-09 at 11.07.05 AM.png>)
 ---
 geometry: margin=0.5in, letterpaper
 header-includes:
