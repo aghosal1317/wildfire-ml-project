@@ -34,6 +34,7 @@ import argparse
 import glob
 import os
 
+import numpy as np
 import pandas as pd
 
 CASES = ["lahaina", "camp_fire"]
@@ -66,7 +67,11 @@ def find_case_files(case, data_dir):
 
 
 def load_timestamps(csv_path, timestamp_col):
-    df = pd.read_csv(csv_path)
+    try:
+        df = pd.read_csv(csv_path, low_memory=False)
+    except pd.errors.EmptyDataError:  # e.g. a subreddit with no posts in the window
+        print(f"    (empty file: {csv_path})")
+        return pd.Series(dtype="datetime64[ns]")
     if timestamp_col not in df.columns:
         print(f"    ! '{timestamp_col}' not in {csv_path}; columns: {list(df.columns)}")
         return pd.Series(dtype="datetime64[ns]")
@@ -74,21 +79,32 @@ def load_timestamps(csv_path, timestamp_col):
     # GDELT's 'seendate' looks like 20230809T120000Z; Reddit/PullPush's
     # 'created_utc' is a Unix epoch integer.
     if col.dtype == object and col.astype(str).str.contains("T").any():
-        ts = pd.to_datetime(col, format="%Y%m%dT%H%M%SZ", errors="coerce")
+        ts = pd.to_datetime(col, format="%Y%m%dT%H%M%SZ", errors="coerce", utc=True)
     else:
-        ts = pd.to_datetime(col, unit="s", errors="coerce")
-    return ts.dropna()
+        ts = pd.to_datetime(col, unit="s", errors="coerce", utc=True)
+    # naive UTC for every source, so GDELT and Reddit times can be compared
+    return ts.dt.tz_convert(None).dropna()
 
 
-def compute_burst(timestamps, freq="h", baseline_window=6, z_threshold=2.0):
-    if timestamps.empty:
-        return pd.DataFrame(columns=["count", "z_score", "burst"])
-    counts = timestamps.dt.floor(freq).value_counts().sort_index()
+def compute_burst(timestamps, freq="h", baseline_window=24, z_threshold=3.0, min_baseline=6):
+    """Count events per `freq` bucket and z-score each bucket against the
+    `baseline_window` buckets *before* it (the bucket itself is excluded --
+    including it, as an earlier version did, caps z at (n-1)/sqrt(n), about
+    2.04 for a 6-bucket window, so real spikes never cleared the threshold).
+    The std is floored at sqrt(mean) (Poisson noise, min 1) so a near-empty
+    baseline can't turn a handful of posts into a huge z. No burst can be
+    flagged until `min_baseline` buckets of history exist."""
+    ts = timestamps.dropna()
+    if ts.empty:
+        return pd.DataFrame(columns=["count", "baseline_mean", "z_score", "burst"])
+    counts = ts.dt.floor(freq).value_counts().sort_index()
     counts = counts.asfreq(freq, fill_value=0)
-    rolling_mean = counts.rolling(baseline_window, min_periods=1).mean()
-    rolling_std = counts.rolling(baseline_window, min_periods=1).std().fillna(0)
-    z = (counts - rolling_mean) / rolling_std.replace(0, 1)
-    result = pd.DataFrame({"count": counts, "z_score": z})
+    prior = counts.shift(1)
+    mean = prior.rolling(baseline_window, min_periods=min_baseline).mean()
+    std = prior.rolling(baseline_window, min_periods=min_baseline).std()
+    noise_floor = np.maximum(np.sqrt(mean), 1)
+    z = (counts - mean) / np.maximum(std, noise_floor)
+    result = pd.DataFrame({"count": counts, "baseline_mean": mean, "z_score": z})
     result["burst"] = result["z_score"] >= z_threshold
     return result
 
@@ -107,7 +123,8 @@ def analyze_file(csv_path, timestamp_col, freq, baseline_window, z_threshold):
         first_burst = result.index[result["burst"]].min()
         print(f"    -> {out_path} written; first burst at {first_burst}")
     else:
-        print(f"    -> {out_path} written; no burst >= z={z_threshold} (try a lower --z)")
+        print(f"    -> {out_path} written; no burst >= z={z_threshold} "
+              f"(max z {result['z_score'].max():.2f})")
 
 
 if __name__ == "__main__":
@@ -118,9 +135,9 @@ if __name__ == "__main__":
                          help="folder containing the CSVs (default: the project's data/ folder)")
     parser.add_argument("--case", choices=CASES + ["all"], default="all")
     parser.add_argument("--freq", default="h", help="pandas offset alias: h, 30min, D, etc.")
-    parser.add_argument("--baseline-window", type=int, default=6,
+    parser.add_argument("--baseline-window", type=int, default=24,
                          help="number of prior buckets used as the rolling baseline")
-    parser.add_argument("--z", type=float, default=2.0, help="z-score threshold for a burst")
+    parser.add_argument("--z", type=float, default=3.0, help="z-score threshold for a burst")
     parser.add_argument("--file", help="analyze one specific CSV instead of auto-discovery")
     parser.add_argument("--timestamp-col", help="required when using --file")
     args = parser.parse_args()

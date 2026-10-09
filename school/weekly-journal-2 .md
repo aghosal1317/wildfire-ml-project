@@ -21,9 +21,15 @@ This daily log summarizes your research for the previous week Sunday to Sunday.
 
 I am still getting 429 errors. I will try leaving my computer open and have the script fun with caffinate, but I'm not very optomistic that it will even pull data, since the api is giving many errors. 
 
+### Thursday October 8
+
+I ran the scripts at home, PullPush seems to actually be working there, so I got r/California and r/Hawaii data. Seems like the school's wifi is blocking something with PullPush, even though it worked before. 
+
 ### Friday October 3
 
-Today I wrote an Chrome Extension that reminds me to meditate. Details..
+In the notebook, I ran burst detection on each source to find the first hour where activity spiked above the previous 24 hours. 10 of the 12 sources with data show a clear burst. Local Hawaii comments spiked first, much before GDELT. Soon after, r/Maui comments spiked, but again, before GDELT. This is a little promising for my project because it shows that local social media picked up on the fire a few hours before national news did. For camp fire, local posts were too small to find a clear spike.
+
+I need to input official timeline data to measure how far ahead/behind the official warnings were.
 
 ### Saturday October 4
 

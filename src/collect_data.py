@@ -79,7 +79,7 @@ import time
 import traceback
 import zipfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import requests
@@ -388,12 +388,22 @@ def _paginate_pullpush(url, base_params, page_size=PULLPUSH_PAGE_SIZE, max_pages
     return pd.DataFrame(all_rows)
 
 
+def _utc_window(start_date, end_date):
+    """Epoch seconds for [start_date 00:00 UTC, end_date + 1 day 00:00 UTC):
+    the same window the GDELT fetchers use, with end_date included. (These
+    used to be built in the Mac's local time zone with end_date excluded, so
+    Reddit data stopped ~04:00 UTC on end_date while GDELT ran to the end of
+    it.)"""
+    start = datetime.strptime(start_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = datetime.strptime(end_date, "%Y-%m-%d").replace(tzinfo=timezone.utc) + timedelta(days=1)
+    return int(start.timestamp()), int(end.timestamp())
+
+
 def fetch_pullpush(query, start_date, end_date, kind="submission", page_size=PULLPUSH_PAGE_SIZE):
     """Reddit posts or comments matching a keyword, searched site-wide,
     paginated across the full date range."""
     url = PULLPUSH_SUBMISSION_URL if kind == "submission" else PULLPUSH_COMMENT_URL
-    after = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
-    before = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp())
+    after, before = _utc_window(start_date, end_date)
     base_params = {"q": query, "after": after, "before": before, "sort": "asc"}
     return _paginate_pullpush(url, base_params, page_size=page_size)
 
@@ -444,8 +454,7 @@ def fetch_arctic_shift_subreddit(subreddit, start_date, end_date, kind="posts",
     rest, deduplicated by id.
     """
     url = ARCTIC_SHIFT_URL.format(kind=kind)
-    after = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
-    before = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp())
+    after, before = _utc_window(start_date, end_date)
 
     all_rows, seen_ids = [], set()
     for page in range(max_pages):
