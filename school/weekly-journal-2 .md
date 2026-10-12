@@ -15,8 +15,6 @@
 
 ## Daily Log (9/30/26-10/5/26)
 
-This daily log summarizes your research for the previous week Sunday to Sunday.
-
 ### Wednesday October 7
 
 I am still getting 429 errors. I will try leaving my computer open and have the script fun with caffinate, but I'm not very optomistic that it will even pull data, since the api is giving many errors. 
