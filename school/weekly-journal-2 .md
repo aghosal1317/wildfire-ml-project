@@ -1,37 +1,35 @@
-# Journal Report 1
+# Journal Report 2
 
 ## Aneesh Ghosal
 
-**Research Topic:** State in 1-3 sentences the overall goal of your research project. This should rarely change, but it can when you find you need to modify your scope.
+**Research Topic:** I'm studying why evacuation alerts failed in deadly U.S. wildfires (Lahaina 2023 and the Camp Fire 2018). I compare when public awareness spiked in news and social media against the official warning timeline, and will use that to calibrate a simulation estimating how many deaths specific interventions (earlier alerts, working sirens) could have prevented.
 
-**Mid October Goal:** (What will you have done by 10/15-ish)
+**Mid October Goal:** Have all news (GDELT) and Reddit data collected and cleaned, and run burst detection on every source.
 
-**October Goal:** (And by 10/30-ish)
+**October Goal:** Fill in the official timelines from the Hawaii AG report and Camp Fire reports, measure the difference between public activity and official warnings, write an initial report of what went wrong, and start planning the simulation.
 
 
 \vspace{1em}
 \hrule
 \vspace{1em}
 
-## Daily Log (9/30/26-10/5/26)
+## Daily Log (10/4/26-10/10/26)
 
 ### Wednesday October 7
 
-I am still getting 429 errors. I will try leaving my computer open and have the script fun with caffinate, but I'm not very optomistic that it will even pull data, since the api is giving many errors. 
+I was still getting 429 errors from the Global Database of Events, Language, and Tone (GDELT) API, even with long waits between the requests. I looked into it, and found GDELT's limit is stricter than the one request every 5 seconds. After one 429, it is blocked for over a minute, so retrying so soon doesn't actually help. Instead, I switched to GDELT's raw bulk files, which have to limit. The script downloads each file but only keeps articles about each fire. This took me from 250 articles to now 3875. 
+
 
 ### Thursday October 8
 
-I ran the scripts at home, PullPush seems to actually be working there, so I got r/California and r/Hawaii data. Seems like the school's wifi is blocking something with PullPush, even though it worked before. 
+PullPush started blocking all script requests with a Cloudflare bot check (HTTP 403), so I switched to subreddit specific data in Artic Shift instead, a different Reddit source. What I'm noticing is that it works on my home wifi, but is blocked at school. At home, I got r/Hawaii and r/Maui. I also set up a log so I could see if there were any errors in collection, it didn't look like there were any.
 
-### Friday October 3
+### Friday October 9
 
-In the notebook, I ran burst detection on each source to find the first hour where activity spiked above the previous 24 hours. 10 of the 12 sources with data show a clear burst. Local Hawaii comments spiked first, much before GDELT. Soon after, r/Maui comments spiked, but again, before GDELT. This is a little promising for my project because it shows that local social media picked up on the fire a few hours before national news did. For camp fire, local posts were too small to find a clear spike.
+For Lahaina, local r/Hawaii comments spiked first (Aug 8, 18:00 UTC), then r/Maui comments (Aug 9, 06:00 UTC), both before national news in GDELT (Aug 9, 11:00 UTC). This is promising because it suggests local social media picked up on the fire hours before national news. For the Camp Fire, r/California comments show a burst, but r/California posts and the Reddit-wide posts were just under the threshold.
 
-I need to input official timeline data to measure how far ahead/behind the official warnings were.
+One caution: the local subreddit data is everything posted there, not just fire posts, so some early bursts might just be normal morning activity. I need to add a keyword filter (fire, evacuate, smoke, etc.) to check this. I also set up a notebook section for the official timeline, which converts local times to UTC and computes the lag between each warning and each source's first burst.
 
-### Saturday October 4
-
-If you work outside of school time, include it in your journal as well. In general, absence from school does not excuse you from research that day -- I expect you'll make it up a different day that week if possible.
 
 ## Timeline
 
@@ -41,24 +39,28 @@ If you work outside of school time, include it in your journal as well. In gener
 \hline
 \textbf{Date} & \textbf{Goal} & \textbf{Met?} \\
 \hline
-Today minus 2 weeks & Reminder of your previous goal & Did you meet the goal? (i.e. Done or Not Done) \\
+Today minus 2 weeks & Pull social media data & Partially done; fixed in the following week \\
 \hline
-Today minus 1 week &  & Maybe say if you modified it, etc. \\
+Today minus 1 week & Fix GDELT errors, pull California and Hawaii data & Done. Switched GDELT to bulk files; got r/Hawaii, r/Maui, r/California from Arctic Shift \\
 \hline
-This week & State your goal to be completed at this time & T \\
+This week & Analyze data: run burst detection on every source & Done \\
 \hline
-Today plus 1 week &  & blank \\
+Today plus 1 week & Fill in official timelines from the AG report and Camp Fire reports; add keyword filter to local subreddit data; compute lag table & \\
 \hline
-Today plus 2 weeks &  & blank \\
+Today plus 2 weeks & Write initial report of what went wrong in each fire and start planning the simulation & \\
 \hline
 \end{longtable}
 
 ## Reflection
 
-A detailed person accounting of how this week went, how your project is going, description of successes and failures. If you
-need(ed) to change goals, or refocus your project, explain it here. If you have specific questions or needs, you can list them here.
-This is a good place to include photos, diagrams, screenshots, code, etc. if it's especially relevant.
-![alt text](<../data/Screenshot 2026-10-09 at 11.07.05 AM.png>)
+This week was mostly about data sources and how to get around their limits. The GDELT API was kind of unusable because of all their rate limits, so switching to the bulk files gave me a lot more data than the API probably could have. PullPush also getting blocked was annoying, but Arctic Shift was able to give me the data I needed. It needs to be run at home though, school wifi blocks it.
+
+The takeaway from this week is that I need to filter my data out, the local subreddit data includes unrelated posts. That means the screenshot of the graph does NOT tell the full story right now.
+
+Next, I need to read the Hawaii AG report and Camp Fire reports to build their timelines (ignition, first warning, etc.), so I can compare my (filtered) results.
+
+![alt text](<../data/Screenshot 2026-10-09 at 11.07.05 AM.png>)
+
 ---
 geometry: margin=0.5in, letterpaper
 header-includes:
