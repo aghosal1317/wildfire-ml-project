@@ -30,7 +30,6 @@ For Lahaina, local r/Hawaii comments spiked first (Aug 8, 18:00 UTC), then r/Mau
 
 One caution: the local subreddit data is everything posted there, not just fire posts, so some early bursts might just be normal morning activity. I need to add a keyword filter (fire, evacuate, smoke, etc.) to check this. I also set up a notebook section for the official timeline, which converts local times to UTC and computes the lag between each warning and each source's first burst.
 
-
 ## Timeline
 
 (in latex, use double backslash to separate rows and ampersand for columns. )
@@ -59,7 +58,7 @@ The takeaway from this week is that I need to filter my data out, the local subr
 
 Next, I need to read the Hawaii AG report and Camp Fire reports to build their timelines (ignition, first warning, etc.), so I can compare my (filtered) results.
 
-![alt text](<../data/Screenshot 2026-10-09 at 11.07.05 AM.png>)
+![alt text](data/lahaina-bursts.png)
 
 ---
 geometry: margin=0.5in, letterpaper
