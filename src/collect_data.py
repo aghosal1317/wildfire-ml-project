@@ -67,6 +67,7 @@ Usage:
     python collect_data.py --gdelt-chunk-hours 2   # if a chunk warns it hit the cap
     python collect_data.py --gdelt-only --gdelt-sleep 30   # retry just GDELT
     python collect_data.py --local-only        # just the subreddit data (Arctic Shift)
+    python collect_data.py --baseline          # same subreddits, an ordinary week earlier
 """
 
 import argparse
@@ -510,16 +511,33 @@ def save_or_append(new_df, path, dedup_col=None, label=""):
           f"{len(combined)} total rows now in {path} (file written: {written})")
 
 
-def collect_local(case_name, out):
-    """Subreddit-scoped posts and comments for every subreddit in the case."""
+BASELINE_DAYS_BEFORE = 7  # a whole week earlier, so each day lines up with the same weekday
+
+
+def collect_local(case_name, out, baseline=False):
+    """Subreddit-scoped posts and comments for every subreddit in the case.
+
+    baseline=True fetches the same subreddits for the same window shifted
+    BASELINE_DAYS_BEFORE days earlier -- an ordinary week, to show the normal
+    daily rhythm (e.g. a regular morning rise in activity) that the fire
+    week's bursts should be judged against. Saved as *_baseline.csv so it
+    never mixes with the fire-week files."""
     case = CASES[case_name]
+    start, end = case["start"], case["end"]
+    tag = ""
+    if baseline:
+        shift = timedelta(days=BASELINE_DAYS_BEFORE)
+        start = (datetime.strptime(start, "%Y-%m-%d") - shift).strftime("%Y-%m-%d")
+        end = (datetime.strptime(end, "%Y-%m-%d") - shift).strftime("%Y-%m-%d")
+        tag = "_baseline"
+        print(f"  (baseline week: {start} to {end})")
     for sub in case["subreddits"]:
         for kind, suffix in [("posts", "reddit_local"), ("comments", "reddit_local_comments")]:
-            print(f"  r/{sub} {kind} (subreddit-scoped, Arctic Shift)...")
+            print(f"  r/{sub} {kind}{' baseline' if baseline else ''} (subreddit-scoped, Arctic Shift)...")
             try:
-                local_df = fetch_arctic_shift_subreddit(sub, case["start"], case["end"], kind)
-                save_or_append(local_df, out(f"{case_name}_{sub}_{suffix}.csv"), dedup_col="id",
-                                label=f"r/{sub} local {kind}")
+                local_df = fetch_arctic_shift_subreddit(sub, start, end, kind)
+                save_or_append(local_df, out(f"{case_name}_{sub}_{suffix}{tag}.csv"), dedup_col="id",
+                                label=f"r/{sub} local {kind}{tag}")
             except Exception:
                 FAILURES.append(f"{case_name} r/{sub} {kind}")
                 print(f"    ! r/{sub} local {kind} failed:")
@@ -527,7 +545,7 @@ def collect_local(case_name, out):
 
 
 def collect_case(case_name, out_dir=DATA_DIR, gdelt_chunk_hours=4, gdelt_sleep=10,
-                 gdelt_only=False, gdelt_source="bulk", local_only=False):
+                 gdelt_only=False, gdelt_source="bulk", local_only=False, baseline=False):
     case = CASES[case_name]
     os.makedirs(out_dir, exist_ok=True)
     print(f"\n=== Collecting: {case_name} ({case['start']} to {case['end']}) ===")
@@ -535,6 +553,9 @@ def collect_case(case_name, out_dir=DATA_DIR, gdelt_chunk_hours=4, gdelt_sleep=1
     def out(filename):
         return os.path.join(out_dir, filename)
 
+    if baseline:
+        collect_local(case_name, out, baseline=True)
+        return
     if local_only:
         collect_local(case_name, out)
         return
@@ -598,6 +619,9 @@ if __name__ == "__main__":
                               "limit, complete. api: the rate-limited DOC 2.0 API.")
     parser.add_argument("--local-only", action="store_true",
                          help="only fetch the subreddit-scoped data (Arctic Shift)")
+    parser.add_argument("--baseline", action="store_true",
+                         help=f"only fetch the subreddit data for an ordinary week "
+                              f"({BASELINE_DAYS_BEFORE} days before each fire) -> *_baseline.csv")
     parser.add_argument("--gdelt-only", action="store_true",
                          help="only fetch GDELT, skip Reddit (handy for re-running failed chunks)")
     args = parser.parse_args()
@@ -605,7 +629,8 @@ if __name__ == "__main__":
     for name in (list(CASES) if args.case == "all" else [args.case]):
         collect_case(name, out_dir=args.out_dir, gdelt_chunk_hours=args.gdelt_chunk_hours,
                      gdelt_sleep=args.gdelt_sleep, gdelt_only=args.gdelt_only,
-                     gdelt_source=args.gdelt_source, local_only=args.local_only)
+                     gdelt_source=args.gdelt_source, local_only=args.local_only,
+                     baseline=args.baseline)
 
     print("\nDone. Each CSV has a timestamp column you can feed into analyze_burst.py:")
     print("  GDELT      -> 'seendate'")
