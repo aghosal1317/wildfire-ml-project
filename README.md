@@ -4,7 +4,7 @@ Why do evacuation warnings fail to reach people during deadly wildfires? This pr
 
 **Research question:** Across documented U.S. wildfire disasters, what in the alert and evacuation process contributed most to deaths, and how much would specific interventions have reduced casualties?
 
-> **Keeping this updated:** at the end of each week, add an entry to the [Progress log](#progress-log) (same idea as the weekly journal), tick off finished items in [Next steps](#next-steps), and update the [Data status](#data-status) table if any data changed. Last updated: **Oct 14, 2026**.
+> **Keeping this updated:** at the end of each week, add an entry to the [Progress log](#progress-log) (same idea as the weekly journal), tick off finished items in [Next steps](#next-steps), and update the [Data status](#data-status) table if any data changed. Last updated: **Oct 16, 2026**.
 
 ---
 
@@ -12,7 +12,9 @@ Why do evacuation warnings fail to reach people during deadly wildfires? This pr
 
 ```
 data/     collected CSVs (one file per case and source) + burst-detection outputs
-src/      code: data collection, burst detection, analysis notebook
+  classifier/  classifier inputs/outputs: corpora, hand labels, predictions
+src/      code: data collection, burst detection, classifiers, analysis notebook
+models/   trained SetFit models (not committed -- ~400 MB each; recreate with src/train_setfit.py)
 school/   proposal, plan, milestones, weekly journals (Markdown + PDF)
 logs/     timestamped logs from collection runs (not committed)
 ```
@@ -22,7 +24,11 @@ logs/     timestamped logs from collection runs (not committed)
 | `src/collect_data.py` | Downloads news (GDELT) and Reddit data for both fires into `data/` |
 | `src/run_collection.sh` | Runs `collect_data.py` in the background with the Mac kept awake, retrying until it succeeds or time runs out, and logging to `logs/` |
 | `src/analyze_burst.py` | Finds the first hour each source "bursts" (spikes above its recent baseline) and writes `*_burst.csv` files |
-| `src/wildfire_analysis.ipynb` | Main analysis: loads the data, runs burst detection, plots activity over time against the official timeline, and computes lag tables |
+| `src/build_corpus.py` | Builds the text corpora the classifiers use: the fire week and the normal week (r/Maui + r/Hawaii) |
+| `src/classify_zeroshot.py` | Zero-shot DeBERTa classifier (no training data): fire-relevance + information category |
+| `src/train_setfit.py` | Trains the SetFit classifiers on the hand labels and predicts every post |
+| `src/evaluate_classifiers.py` | Compares the keyword filter, zero-shot and SetFit on held-out posts |
+| `src/wildfire_analysis.ipynb` | Main analysis: loads the data, runs burst detection, plots activity over time against the official timeline, computes lag tables, and plots the classifier's information categories over time |
 | `src/GDELT-test.ipynb` | Early scratch test of the GDELT API |
 
 ## How to run
@@ -44,6 +50,13 @@ src/run_collection.sh 3 --baseline
 
 # Burst detection from the command line
 .venv/bin/python src/analyze_burst.py
+
+# Classifiers (see "Classifier" below). Order matters; SetFit training takes ~15-25 min on the Mac GPU.
+.venv/bin/python src/build_corpus.py
+.venv/bin/python src/classify_zeroshot.py                          # zero-shot on the hand-labeled posts
+.venv/bin/python src/train_setfit.py --all                         # train (or load saved) SetFit, predict everything
+.venv/bin/python src/classify_zeroshot.py --input setfit_baseline_holdout.csv --name baseline_holdout
+.venv/bin/python src/evaluate_classifiers.py                       # the comparison table
 ```
 
 Then open `src/wildfire_analysis.ipynb` and run all cells.
@@ -58,6 +71,7 @@ Then open `src/wildfire_analysis.ipynb` and run all cells.
 | **PullPush** | Reddit-wide keyword search ("Lahaina fire", etc.) | Behind a Cloudflare bot check since Oct 8, 2026, so it can't be updated for now. Existing files are kept. |
 | **Arctic Shift** | Everything posted in local subreddits (posts + comments) | Works on the home network; **blocked on the school network**. Throttles heavily, so runs can take hours. The notebook filters these to fire-related posts (see Findings). |
 | **FSRI Lahaina timeline** (`data/lahaina_official_timeline_fsri.csv`) | Official minute-by-minute timeline: 12,140 entries from dispatch audio, emergency management logs, WEA/EAS alerts, county social media | Published by the [Hawaii AG](https://ag.hawaii.gov/maui-wildfire-investigation-resources-page/) with the FSRI Phase One report. Times are HST. |
+| **Normal week** (`*_baseline.csv`) | The same subreddits 7 days before each fire | Shows the ordinary rhythm of each subreddit. Also gives the classifiers free "not about the fire" examples, since the fire hadn't happened yet. |
 | **Cal OES Camp Fire After Action Report** | Official Camp Fire events and findings | [Report PDF](https://www.caloes.ca.gov/wp-content/uploads/Preparedness/Documents/FINAL-AAR-2018-Camp-Fire-508-Clean-Copy-11.17.25.pdf). Far less detailed than the Lahaina timeline; NIST TN 2135 (fire progression) and TN 2252 (notification/evacuation) are the next sources to check. |
 
 ## Data status
@@ -68,16 +82,18 @@ Times are UTC.
 |---|---|---:|---|
 | Lahaina | GDELT news | 3,875 | Aug 8 17:00 → Aug 12 00:45 |
 | Lahaina | Reddit-wide posts / comments | 212 / 445 | Aug 9 → Aug 11 04:00 |
-| Lahaina | r/Hawaii posts / comments | 187 / 4,163 | Aug 8 04:00 → Aug 11 04:00 |
-| Lahaina | r/Maui posts / comments | 333 / 3,900 | comments stop Aug 10 20:17 (incomplete) |
+| Lahaina | r/Hawaii posts / comments | 257 / 5,288 | Aug 8 00:00 → Aug 12 00:00 |
+| Lahaina | r/Maui posts / comments | 439 / 6,551 | Aug 8 00:00 → Aug 12 00:00 |
+| Lahaina | Normal week: r/Hawaii / r/Maui (posts + comments) | 2,687 / 177 | Aug 1 → Aug 5 |
 | Camp Fire | GDELT news | 1,641 | Nov 8 18:00 → Nov 13 00:45 |
 | Camp Fire | Reddit-wide posts / comments | 72 / 55 | Nov 8 → Nov 12 |
-| Camp Fire | r/California posts / comments | 230 / 2,903 | Nov 8 05:00 → Nov 12 05:00 |
+| Camp Fire | r/California posts / comments | 276 / 3,495 | Nov 8 00:00 → Nov 13 00:00 |
+| Camp Fire | Normal week: r/California (posts + comments) | 1,628 | Nov 1 → Nov 6 |
 | Camp Fire | r/Chico | 0 | No data for that week in either archive |
 
 Known gaps:
-- **Reddit windows end about 4 hours into the last day.** The code now uses the same UTC window as GDELT (last day included), but the existing files were collected with the old window. A `--local-only` run on the home network fills this in for the subreddit files. The Reddit-wide files can't be extended while PullPush is blocked.
-- **r/Maui comments are incomplete**, stopping at Aug 10 20:17 after a dropped connection. The same home-network run fixes this.
+- **Reddit-wide files end about 4 hours into the last day** (collected with the old time window). They can't be extended while PullPush is blocked. The subreddit files now cover the full window.
+- **r/Maui is normally very quiet:** 177 posts and comments in the whole normal week, against about 7,000 in the fire week. So its near-silence on the afternoon of Aug 8 is partly its usual level, and the evening surge is far above normal.
 
 ## Findings so far
 
@@ -124,6 +140,17 @@ Official timeline (Cal OES AAR unless noted):
 - **Public response came ~2–3 h after the first reports.** Fire-related r/California comments and news coverage both start around 9–10 AM, while Paradise was burning.
 - The local signal is thin: fewer than 10 Camp Fire comments an hour, too few for burst detection (max z 1.75).
 
+### Classifier: what kind of information was posted (Lahaina)
+
+The keyword filter misses posts that don't use fire words ("Are you still evacuated?"), and it can't tell *what kind* of post something is. So I compared it with two machine-learning classifiers. The full method is in [Classifier](#classifier) below. In short:
+
+- **SetFit finds fire posts best.** On held-out posts: F1 0.91 vs 0.85 for keywords. It flags 5,655 of the 12,261 fire-week posts as fire-related, about 2.3× what keywords found.
+- **The 2–8 PM silence holds under the classifier too.** It finds 0–3 fire posts per hour in that window, and the few it adds beyond the keywords are false alarms (hurricane insurance, Honolulu traffic).
+- **The only warning posted that afternoon was about a different fire:** a 3:51 PM repost of the County's evacuation advisory for Olinda/Piʻiholo (Upcountry). Nothing warned about Lahaina.
+- **The first evening posts after 6 PM** are mostly secondhand reports and reposted news or official updates, with a smaller share of eyewitness accounts. That matches reading them by hand.
+- **Over the following days** posts shift toward discussion, sympathy and help offers. (Notebook: "What kind of information was posted?")
+- **Category results are broad trends only.** Overall category accuracy is 0.66, *eyewitness* is weak (F1 0.33), and *warning* can't be evaluated (only 3 labeled examples).
+
 ### Corrections to earlier results
 
 Filtering to fire-related posts showed two earlier "early bursts" were not about the fires:
@@ -137,6 +164,26 @@ Filtering to fire-related posts showed two earlier "early bursts" were not about
 - **First-burst timing** depends on the detection settings (24 h baseline, z ≥ 3). The figure is the more robust view.
 - **Case study only:** with two fires, this is a descriptive case-study analysis, not a trained prediction model.
 
+## Classifier
+
+Code in `src/`; data in `data/classifier/`. Lahaina only so far.
+
+1. **Corpus** (`build_corpus.py`): every r/Maui and r/Hawaii post and comment from the fire week (12,261) and the normal week (2,821).
+2. **Hand labels** (`gold_labels.csv`): 277 fire-week posts, labeled *not relevant* or one of 8 categories: warning, eyewitness, secondhand, info_request, news_or_official, help, sympathy, discussion. Split 60% train / 40% test; the test posts are never used for training or tuning. *The labels are a first draft by Claude and need reviewing.*
+3. **Zero-shot DeBERTa** (`classify_zeroshot.py`, `MoritzLaurer/deberta-v3-large-zeroshot-v2.0`): no training. The model judges whether each post implies a sentence such as "This text is about a disaster or its aftermath". The wording was tuned on the train split; the first wording ("…the August 2023 wildfires on Maui") found only 1% of relevant posts.
+4. **SetFit** (`train_setfit.py`, `paraphrase-mpnet-base-v2`): fine-tunes a sentence-embedding model on pairs of labeled posts, then fits a logistic regression. The relevance model also gets 150 normal-week posts as "not relevant". Without them it flagged ordinary chatter as fire-related (67% of the fire week).
+5. **Evaluation** (`evaluate_classifiers.py`): on the 111 test posts, with 95% bootstrap ranges, plus false alarms on 500 held-out normal-week posts:
+
+| | Keyword filter | Zero-shot | SetFit |
+|---|---|---|---|
+| Finding fire posts: F1 (95% range) | 0.85 (0.79–0.90) | 0.89 (0.83–0.94) | **0.91 (0.87–0.96)** |
+| False alarms on normal-week posts | **2.6%** | 4.6% | 4.0% |
+| Category accuracy (88 relevant test posts) | — | 0.51 | **0.66** |
+| Category macro-F1 | — | 0.52 | 0.52 |
+
+- **Zero-shot vs SetFit by category:** zero-shot is better at *eyewitness* (F1 0.63 vs 0.33) and *info_request*; SetFit is better at *discussion* and *news_or_official*.
+- **Sampling bias:** the hand-labeled sample over-represents keyword matches, so the keyword filter's precision and recall there aren't corpus-wide values. Compare the methods with each other.
+
 ## Progress log
 
 Newest first. Add one entry per week.
@@ -148,6 +195,9 @@ Newest first. Add one entry per week.
 - **Lag results:** in Lahaina, local Reddit reacted ~5 h after the flare-up and ~3.7 h after the first Lahaina WEA, and was nearly silent from 2–8 PM. Camp Fire public activity started ~2–3 h after the first reports.
 - **Readable figure:** added a cleaner timeline figure (local time, one panel per source type, numbered key events). Fixed "(nan)" labels on the old plot.
 - Added `--baseline` to `collect_data.py` to download an ordinary week for comparison.
+- **Data:** home-network runs filled in the full subreddit windows, including all r/Maui comments, and downloaded the normal week for every subreddit.
+- **Reading the early posts:** hand-coded the first fire posts (6–10 PM HST) and lined their events up against the FSRI timeline. Reddit came 2.4–5.2 h after the first dispatch record for every Lahaina event, and the EOC/MEMA logs barely recorded town-level events that night.
+- **Classifiers:** added zero-shot DeBERTa and SetFit with 277 hand labels, a train/test split, and normal-week negatives. SetFit is the best fire-post filter (F1 0.91). Added the categories-over-time figure to the notebook.
 
 ### Week of Oct 6
 - **GDELT fixed:** switched from the rate-limited API to GDELT's bulk files. Lahaina went from 250 articles (covering only the last 5 hours) to 3,875 covering the whole fire. Camp Fire: 1,641.
@@ -167,8 +217,12 @@ Newest first. Add one entry per week.
 ## Next steps
 
 **Short term (by Oct 15–20)**
-- [ ] Home-network run to finish r/Maui comments and fill in the full Reddit windows: `src/run_collection.sh 3 --local-only`
-- [ ] Then the ordinary-week download: `src/run_collection.sh 3 --baseline`, and a notebook cell comparing the fire week with the normal week
+- [x] Home-network run to finish r/Maui comments and fill in the full Reddit windows
+- [x] Ordinary-week download (`--baseline`)
+- [ ] Notebook cell comparing the fire week with the normal week, hour by hour
+- [ ] Review the hand labels in `data/classifier/gold_labels.csv` (drafted by Claude)
+- [ ] Label ~15–20 more *eyewitness* and *warning* posts, retrain SetFit (`--retrain category`), re-evaluate
+- [ ] Run the classifiers on the Camp Fire (r/California)
 - [x] Build the official timeline for Lahaina (FSRI) and enter it in `OFFICIAL_TIMELINE`
 - [ ] Verify the Camp Fire timeline against NIST TN 2252 (exact Paradise evacuation time, channels used) and TN 2135 (when fire reached Paradise)
 - [ ] Confirm in the FSRI Phase Two findings that Lahaina's sirens were not activated

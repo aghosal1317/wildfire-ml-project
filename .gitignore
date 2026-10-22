@@ -1,3 +1,5 @@
 logs/
 data/.*.gkg_done
 __pycache__/
+models/
+checkpoints/
