@@ -47,7 +47,10 @@ def train(texts, labels, out_name):
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     model = SetFitModel.from_pretrained(BASE_MODEL, device=device)
     ds = Dataset.from_dict({"text": [t[:2000] for t in texts], "label": labels})
-    args = TrainingArguments(batch_size=16, num_epochs=1, num_iterations=20, seed=SEED)
+    # SetFit's defaults save ~1.2 GB checkpoints to ./checkpoints in whatever folder you run from
+    # (too big for GitHub). Training is one short epoch, so skip them; scratch output goes in models/.
+    args = TrainingArguments(batch_size=16, num_epochs=1, num_iterations=20, seed=SEED,
+                             output_dir=os.path.join(MODEL_DIR, "checkpoints"), save_strategy="no")
     Trainer(model=model, args=args, train_dataset=ds).train()
     path = os.path.join(MODEL_DIR, out_name)
     model.save_pretrained(path)
