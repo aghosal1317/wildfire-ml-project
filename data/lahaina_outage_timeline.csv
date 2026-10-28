@@ -1,0 +1,22 @@
+time_hst,system,status,event,source,source_detail,note
+2023-08-08 04:30,power,out,Power out near Napili 'since about 4:30am' (resident),Reddit r/Maui,posted 7:14 AM,"eyewitness onset; earliest time for West Maui power loss, but posted ~3 h later"
+2023-08-08 05:02,power,out,"Caller reports lost power at Napili Shores, wind-related",FSRI timeline (data/lahaina_official_timeline_fsri.csv),MPD Dispatch,first official record of West Maui power loss
+2023-08-08 05:08,power,out,Power outage in Lahaina; traffic lights flashing at Dickenson/Highway,FSRI timeline (data/lahaina_official_timeline_fsri.csv),MPD Dispatch / Event Chronology,
+2023-08-08 05:13,power,out,All power out in residential areas north to Napili,FSRI timeline (data/lahaina_official_timeline_fsri.csv),MPD Dispatch,
+2023-08-08 05:38,power,out,"Power outage Lahaina north to past Napili/Kapalua, ~7,000 customers",FSRI timeline (data/lahaina_official_timeline_fsri.csv),MEMA,
+2023-08-08 06:00,power,restored,Transmission line re-energized to restore some Lahaina customers,"Hawaiian Electric CEO testimony, via Civil Beat (Nov 2023)",written responses to Congress,
+2023-08-08 06:39,power,out,Same line trips offline and is never turned back on,"Hawaiian Electric CEO testimony, via Civil Beat (Nov 2023)",written responses to Congress,around the 6:37 AM morning fire
+2023-08-08 08:19,power,out,"West Maui: 2,628 Hawaiian Electric customers without power",FSRI timeline (data/lahaina_official_timeline_fsri.csv),HiEMA,
+2023-08-08 09:55,power,out,County: power outages impacting ability to pump water,FSRI timeline (data/lahaina_official_timeline_fsri.csv),County of Maui Facebook,
+2023-08-08 14:55,power,out,Afternoon fire starts; lines to Lahaina de-energized for 6+ hours,"Hawaiian Electric statement, Aug 27 2023",company statement,"HECO's account; lines were off, not grounded"
+2023-08-08 16:22,landline,degraded,Police dispatch: 'our phones are down',FSRI timeline (data/lahaina_official_timeline_fsri.csv),PD Dispatch Audio D4,unclear whether station landlines or the 911 system
+2023-08-08 17:00,landline,out,Hawaiian Telcom loses connectivity to Lahaina and Napili central offices (landlines/internet),FSRI timeline (data/lahaina_official_timeline_fsri.csv),MEMA Activity Log (reported 6:59 PM),time is approximate ('around 1700')
+2023-08-08 17:02,power,out,Hawaiian Electric warns West Maui to prepare for an overnight outage,FSRI timeline (data/lahaina_official_timeline_fsri.csv),MEMA EOC Web Logs - HECO,
+2023-08-08 17:33,cell,degraded,"Federal aid request: cellular service spotty, Hawaiian Tel down, Spectrum down in multiple areas",FSRI timeline (data/lahaina_official_timeline_fsri.csv),MEMA FMAG request,the dataset also has this text at 5:33 AM -- likely an AM/PM error (Lahaina fire not reported until 6:37 AM)
+2023-08-08 17:39,cell,out,Fire crews in Lahaina: 'we don't have cell service down here',FSRI timeline (data/lahaina_official_timeline_fsri.csv),Dispatch Audio FD1,
+2023-08-08 17:51,landline,out,Police: station phones are out,FSRI timeline (data/lahaina_official_timeline_fsri.csv),PD Dispatch Audio D4,
+2023-08-08 20:09,cell,out,'There's no Internet or cell service there right now' (about Lahaina),Reddit r/Maui,comment,first local post about the comms outage
+2023-08-08 21:51,landline,out,Welfare check: 'phone lines are down due to fire',FSRI timeline (data/lahaina_official_timeline_fsri.csv),MPD Event Chronology,
+2023-08-09 03:17,cell,out,Police: all phones still down in Lahaina; no cell reception,FSRI timeline (data/lahaina_official_timeline_fsri.csv),PD Dispatch Audio D4,
+2023-08-09 05:40,cell,out,'All West Maui has no service right now',Reddit r/Maui,comment,part of a 4:45-5:46 AM cluster of can't-reach-family posts
+2023-08-09 06:00,cell,out,21 of 21 cell sites serving West Maui out of service (Aug 9-12),"FCC DIRS reports, via RCR Wireless / TV Tech (Aug 2023)",DIRS,daily granularity; 20 of 21 still out Aug 13
