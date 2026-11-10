@@ -16,7 +16,7 @@ My project asks what in the alert and evacuation process contributed most to dea
 
 My research question, from my proposal, is: *across multiple documented U.S. wildfire disasters, what specifically in the alert and evacuation process contributed most to deaths, and how much would specific interventions have reduced casualties?*
 
-In Lahaina, more than 100 people died [VERIFY: exact death count]. As my proposal argues, the danger was known, so this was mainly a failure to warn people who needed to act immediately, not a failure to predict the fire. Many models predict where fires spread; far fewer study why warnings fail.
+In Lahaina, more than 100 people died. As my proposal argues, the danger was known, so this was mainly a failure to warn people who needed to act immediately, not a failure to predict the fire. Many models predict where fires spread; far fewer study why warnings fail.
 
 Official investigations have already documented what happened in each fire, so I'm not redoing them. My project adds three things:
 
